@@ -13,9 +13,9 @@ compose() {
 cleanup() {
     result=$?
     trap - EXIT
-    if [ "$result" -ne 0 ]; then compose logs --tail=35 worker beat web >&2 || true; fi
+    if [ "$result" -ne 0 ]; then compose logs --tail=35 worker beat web source >&2 || true; fi
     compose down --volumes --remove-orphans >/dev/null
-    docker image rm "$QUAKELENS_IMAGE" >/dev/null 2>&1 || true
+    docker image rm "$QUAKELENS_IMAGE" "$QUAKELENS_IMAGE-fixture" >/dev/null 2>&1 || true
     exit "$result"
 }
 
