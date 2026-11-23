@@ -1,0 +1,17 @@
+services:
+  source:
+    image: python:3.12-slim-bookworm
+    command: ["python", "/fixture.py"]
+    volumes:
+      - ./qa/usgs_fixture.py:/fixture.py:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://localhost:8080/health', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+  worker:
+    environment:
+      USGS_QUERY_URL: http://source:8080/query
+    depends_on:
+      source:
+        condition: service_healthy

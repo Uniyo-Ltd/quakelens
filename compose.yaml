@@ -1,0 +1,80 @@
+name: quakelens
+
+x-django: &django
+  build: .
+  image: ${QUAKELENS_IMAGE:-quakelens:local}
+  environment:
+    DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-django-insecure-quakelens-local-demo-only}
+    DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+    POSTGRES_HOST: db
+    POSTGRES_DB: ${POSTGRES_DB:-quakelens}
+    POSTGRES_USER: ${POSTGRES_USER:-quakelens}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quakelens-local-demo-only}
+    CELERY_BROKER_URL: redis://redis:6379/0
+    QUAKE_REFRESH_SECONDS: ${QUAKE_REFRESH_SECONDS:-3600}
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-quakelens}
+      POSTGRES_USER: ${POSTGRES_USER:-quakelens}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quakelens-local-demo-only}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    <<: *django
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    <<: *django
+    command: ["python", "manage.py", "runserver", "0.0.0.0:8000", "--noreload"]
+    ports:
+      - "127.0.0.1:${QUAKELENS_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *django
+    command: ["celery", "-A", "config", "worker", "--loglevel=INFO", "--concurrency=1"]
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  beat:
+    <<: *django
+    command: ["celery", "-A", "config", "beat", "--loglevel=INFO", "--schedule=/tmp/quakelens-beat"]
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
