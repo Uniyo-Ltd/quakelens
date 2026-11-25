@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
@@ -81,6 +82,33 @@ class EarthquakeAPITests(TestCase):
                 self.assertEqual(response.status_code, 400, response.content)
                 self.assertEqual(response.json()["code"], "invalid_parameters")
                 self.assertTrue(response.json()["details"])
+
+    def test_invalid_page_size_retry_opens_first_page_with_same_filters(self):
+        day = self.end - timedelta(days=1)
+        self.quake("older", day, magnitude=2)
+        self.quake("newest", day, magnitude=3)
+        self.quake("below-magnitude", day, magnitude=1)
+        self.quake("before-window", day - timedelta(days=1), magnitude=3)
+
+        url = reverse("earthquake-list")
+        filters = {"start": "2026-11-22", "end": "2026-11-23", "min_magnitude": 2}
+        first = self.client.get(url, {**filters, "page_size": 1}).json()
+        cursor = parse_qs(urlsplit(first["next"]).query)["cursor"][0]
+
+        invalid = self.client.get(url, {**filters, "page_size": 0, "cursor": cursor})
+        self.assertEqual(invalid.status_code, 400)
+        error = invalid.json()
+        self.assertIn("page_size", error["details"])
+        self.assertEqual(urlsplit(error["retry_url"]).netloc, "testserver")
+        retry = self.client.get(error["retry_url"])
+        self.assertEqual(retry.status_code, 200)
+        page = retry.json()
+        self.assertIsNone(page["previous"])
+        self.assertEqual([row["external_id"] for row in page["results"]], ["newest", "older"])
+
+        invalid_filter = self.client.get(url, {"page_size": 0, "min_magnitude": "nan"})
+        self.assertEqual(invalid_filter.status_code, 400)
+        self.assertNotIn("retry_url", invalid_filter.json())
 
     def test_default_cursor_window_stays_fixed_across_midnight(self):
         self.quake("earliest", self.end - timedelta(days=30))

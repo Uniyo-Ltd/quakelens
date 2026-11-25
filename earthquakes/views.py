@@ -18,9 +18,23 @@ def api_exception_handler(exc, context):
     if response is None:
         return None
     if isinstance(exc, ValidationError):
+        details = response.data
         response.data = {
-            "code": "invalid_parameters", "message": "Check the query parameters.", "details": response.data,
+            "code": "invalid_parameters", "message": "Check the query parameters.", "details": details,
         }
+        view = context.get("view")
+        if isinstance(view, EarthquakeList) and isinstance(details, dict) and "page_size" in details:
+            request = view.request
+            params = request.query_params.copy()
+            params.pop("cursor", None)
+            params["page_size"] = str(view.pagination_class.page_size)
+            try:
+                read_filters(ListFilters, params)
+            except ValidationError:
+                # The retry link must be usable with the remaining filters.
+                pass
+            else:
+                response.data["retry_url"] = request.build_absolute_uri(f"{request.path}?{params.urlencode()}")
     else:
         detail = response.data["detail"]
         response.data = {"code": detail.code, "message": str(detail)}
